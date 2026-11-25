@@ -1,0 +1,32 @@
+{
+  "conversation_id": "",
+  "status": "SUCCESS",
+  "response": "",
+  "duration_seconds": 0.4,
+  "num_turns": 0,
+  "usage": { "input_tokens": 0, "output_tokens": 0, "thinking_tokens": 0, "cache_read_tokens": 0, "total_tokens": 0 },
+  "command": {
+    "name": "usage",
+    "data": {
+      "description": "Usage limits",
+      "groups": [
+        {
+          "name": "Gemini Models",
+          "description": "",
+          "buckets": [
+            { "id": "gemini-weekly", "name": "Weekly", "description": "", "window": "weekly", "remaining_fraction": 0.6585638523101807, "reset_time": "2026-12-01T07:52:02Z" },
+            { "id": "gemini-5h", "name": "5-hour", "description": "", "window": "5h", "remaining_fraction": 0.9663717746734619, "reset_time": "2026-11-25T15:09:10Z" }
+          ]
+        },
+        {
+          "name": "Claude and GPT models",
+          "description": "",
+          "buckets": [
+            { "id": "3p-weekly", "name": "Weekly", "description": "", "window": "weekly", "remaining_fraction": 1, "reset_time": "1970-01-01T00:00:00Z" },
+            { "id": "3p-5h", "name": "5-hour", "description": "", "window": "5h", "remaining_fraction": 1, "reset_time": "1970-01-01T00:00:00Z" }
+          ]
+        }
+      ]
+    }
+  }
+}
