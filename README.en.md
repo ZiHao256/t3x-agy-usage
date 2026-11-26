@@ -49,6 +49,10 @@ Only instances signed in with Google (`oauth-*`) are handled; others keep T3's b
 - `npm test` runs the tests (Node 22+, no dependencies; a fake CLI, no network).
 - To try changes: Settings → Extensions → Add local extension, pick this folder, then click refresh on its card after each edit.
 
+## Community
+
+This project takes part in and recognizes the [LINUX DO community](https://linux.do).
+
 ## License
 
 MIT

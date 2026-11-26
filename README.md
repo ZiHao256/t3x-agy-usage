@@ -49,6 +49,10 @@ T3 额度面板里的 Antigravity 额度改由官方 CLI 的 `/usage` 读取：�
 - `npm test` 运行测试（Node 22+，不依赖 npm 包；用假的 CLI，不联网）。
 - 试改动：设置 → 扩展 →「添加本地扩展」选本目录，改完点卡片上的刷新。
 
+## 社区
+
+本项目积极参与并认可 [LINUX DO 社区](https://linux.do)。
+
 ## 许可
 
 MIT
