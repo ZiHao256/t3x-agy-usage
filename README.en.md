@@ -18,6 +18,8 @@ Settings → Extensions → Antigravity usage via CLI → Settings:
 - Show in the usage panel: turn individual limits on or off (for example, weekly limits only); at least one stays on.
 - Limit names follow T3's UI language: in English they read "Gemini · Weekly" and "Claude & GPT (shared) · 5-hour".
 
+![Settings: the last read of two instances, Read now, and which limits to show in the usage panel](docs/settings.png)
+
 ## Install with an agent
 
 Paste this to Claude Code, Codex or another coding agent:

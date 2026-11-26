@@ -18,6 +18,8 @@ T3 额度面板里的 Antigravity 额度改由官方 CLI 的 `/usage` 读取：�
 - 额度面板里显示：按窗口开关（比如只看每周额度），至少留一个。
 - 额度名称跟着 T3 的界面语言，中文下是“Gemini · 每周”“Claude 与 GPT（共用） · 5 小时”。
 
+![设置面板：两个实例的读取状态、立即重读，以及额度面板里显示哪些额度](docs/settings.png)
+
 ## 让 agent 安装
 
 把下面的提示词发给 Claude Code、Codex 等 coding agent：
