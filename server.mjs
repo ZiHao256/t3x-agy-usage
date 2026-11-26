@@ -1,12 +1,16 @@
 // Antigravity 官方额度：T3 Code Extensions 的后台扩展（在 T3 后台里运行）。
 // 每个 T3 Antigravity 实例跑一次官方 CLI 的 /usage 斜杠命令（不发消息、不耗 token），换算成 T3 额度面板的窗口。
 // 不读 token、不直接请求 Google：登录状态由 CLI 自己从这个实例的配置目录读。
+// 设置面板（web.js）经 host.server.call 调这里的 status / reread / unblock / setHidden（apiVersion 6）。
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
 const CACHE_MS = 60_000; // T3 失败后 30 秒重试、启动时各实例一起读：一分钟内复用结果，免得反复起进程
+// 设置面板只列、立即重读只重放这么久以内 T3 还来读过的实例：删掉的、改成别的登录方式的实例 T3 不再来读。
+// shortcut: 按时间判断实例还在不在，删掉后最多还会显示一小时；宿主能给出当前实例列表时改成按列表。
+const STALE_MS = 60 * 60_000;
 const RUN_TIMEOUT_MS = 45_000;
 const KILL_GRACE_MS = 3_000; // SIGTERM 之后还不退就 SIGKILL
 const MAX_OUTPUT = 1 << 20;
@@ -16,16 +20,23 @@ const ARGS = ["-p", "/usage", "--output-format", "json", "--print-timeout", "20s
 // AGY_ACP_* 是 T3 给 ACP 进程用的（项目、OAuth 开关、存储），T3 自己启动 CLI 前也会去掉。
 const DROP_ENV = /^(GEMINI_API_KEY|GOOGLE_\w*|GCLOUD_PROJECT|CLOUDSDK_CORE_PROJECT|GEMINI_HOME|AGY_ACP_\w*|ELECTRON_RUN_AS_NODE|T3X_SERVER_DIR)$/;
 const FAMILY = [
-  ["gemini-", "Gemini"],
-  ["3p-", "Claude & GPT (shared)"],
+  ["gemini-", { zh: "Gemini", en: "Gemini" }],
+  ["3p-", { zh: "Claude 与 GPT（共用）", en: "Claude & GPT (shared)" }],
 ];
 const WINDOWS = {
-  weekly: { kind: "weekly", label: "Weekly", mins: 10080 },
-  "5h": { kind: "session", label: "5-hour", mins: 300 },
+  weekly: { kind: "weekly", label: { zh: "每周", en: "Weekly" }, mins: 10080 },
+  "5h": { kind: "session", label: { zh: "5 小时", en: "5-hour" }, mins: 300 },
 };
+const QUOTA = { zh: "额度", en: "Quota" };
+const ID_RE = /^[\w.:-]{1,80}$/; // 和宿主规整额度窗口时认的 id 一致
 
-/** CLI 的 JSON 输出 → T3 的额度窗口；不是一次零消耗的 /usage 就抛错。 */
-export function parseUsage(stdout) {
+/** CLI 的 JSON 输出 → T3 的额度窗口，标签按 lang（"zh" | "en"）。 */
+export function parseUsage(stdout, lang = "en") {
+  return toWindows(checkUsage(stdout), lang);
+}
+
+/** 取出 /usage 的额度分组；不是一次零消耗的 /usage 就抛错。 */
+function checkUsage(stdout) {
   let out;
   try {
     out = JSON.parse(stdout);
@@ -40,20 +51,24 @@ export function parseUsage(stdout) {
   if (out.command?.name !== "usage") throw new Error(`CLI 返回的不是 /usage 的结果：${out.command?.name}`);
   const groups = out.command.data?.groups;
   if (!Array.isArray(groups)) throw new Error("CLI 的 /usage 输出里没有额度分组");
-  return toWindows(groups);
+  return groups;
 }
 
-export function toWindows(groups) {
+export function toWindows(groups, lang = "en") {
+  const pick = (labels) => labels[lang === "zh" ? "zh" : "en"];
   const windows = [];
+  // CLI 输出格式不对的部分跳过、不抛：结果存进缓存后列状态时还要再换算，抛了会连累其他实例
+  const text = (v) => (typeof v === "string" ? v.trim() : "");
   for (const group of groups) {
-    for (const b of group?.buckets ?? []) {
+    for (const b of Array.isArray(group?.buckets) ? group.buckets : []) {
       if (typeof b?.id !== "string" || !Number.isFinite(b.remaining_fraction)) continue;
-      const family = FAMILY.find(([prefix]) => b.id.startsWith(prefix))?.[1] ?? (group.name?.trim() || b.id);
+      const known = FAMILY.find(([prefix]) => b.id.startsWith(prefix));
+      const family = known ? pick(known[1]) : text(group.name) || b.id;
       const w = WINDOWS[b.window];
       const reset = Date.parse(b.reset_time ?? "");
       windows.push({
         id: b.id,
-        label: `${family} · ${w?.label ?? (b.name?.trim() || "Quota")}`,
+        label: `${family} · ${w ? pick(w.label) : text(b.name) || pick(QUOTA)}`,
         kind: w?.kind ?? "other",
         usedPercent: (1 - Math.max(0, Math.min(1, b.remaining_fraction))) * 100,
         ...(reset > Date.UTC(2000, 0, 1) ? { resetsAt: new Date(reset).toISOString() } : {}), // 没用过的额度重置时间是 1970 年占位
@@ -124,8 +139,10 @@ const newer = (a, b) => {
   return true;
 };
 
-export function createReader({ dataDir, log = () => {}, now = Date.now, timeoutMs = RUN_TIMEOUT_MS }) {
-  const cache = new Map(); // 实例 + 配置 → { at, windows?, error? }
+export function createReader({ dataDir, log = () => {}, now = Date.now, timeoutMs = RUN_TIMEOUT_MS, lang = () => "en", hidden = () => [] }) {
+  const cache = new Map(); // 实例 + 配置 → { at, groups?, error? }
+  const last = new Map(); // 实例 → { ctx, seen, at, groups?, error? }：设置面板显示、立即重读用（ctx 带环境变量，只留在内存里）
+  let epoch = 0; // 每次「恢复运行」加一：恢复前就在跑的读取成功了也不能把 CLI 标成安全
   const inflight = new Map(); // 同上 → Promise
   const versions = new Map(); // CLI 身份 → Promise<版本检查>
   const safe = new Set(); // 跑通过零消耗 /usage 的 CLI 身份
@@ -189,11 +206,12 @@ export function createReader({ dataDir, log = () => {}, now = Date.now, timeoutM
     await checkVersion(id, file, opts);
     const once = async () => {
       if (spent.has(id)) throw new Error("同一个 CLI 刚才的读取可能消耗了 token，已停止运行它");
+      const started = epoch;
       const { code, stdout, stderr } = await guarded(file, ARGS, opts);
       try {
-        const windows = parseUsage(stdout);
-        safe.add(id);
-        return windows;
+        const groups = checkUsage(stdout);
+        if (started === epoch) safe.add(id);
+        return groups;
       } catch (error) {
         if (error instanceof SpentError) spent.add(id);
         if (!stdout.trim() && code !== 0) throw new Error(`CLI 退出码 ${code}：${firstLine(stderr) || "没有输出"}`);
@@ -206,36 +224,67 @@ export function createReader({ dataDir, log = () => {}, now = Date.now, timeoutM
     return turn;
   }
 
+  const live = () => [...last].filter(([, r]) => now() - r.seen < STALE_MS);
+
   async function read(ctx) {
     const { instanceId, profileDirectory, executablePath } = ctx ?? {};
     if (typeof instanceId !== "string" || typeof profileDirectory !== "string" || !path.isAbsolute(profileDirectory)) throw new Error("T3 没有给出实例目录");
     // 登录文件变了（退出、换账号）就不复用旧结果。
     const token = await fs.stat(path.join(profileDirectory, "antigravity-acp", "antigravity-oauth-token")).then((st) => st.mtimeMs, () => 0);
     const key = [instanceId, profileDirectory, executablePath ?? "", token].join("\0");
+    const shown = (r) => {
+      if (r.error) throw r.error;
+      const off = hidden();
+      const all = toWindows(r.groups, lang());
+      const some = all.filter((w) => !off.includes(w.id));
+      return { windows: some.length ? some : all }; // 这个实例的窗口全被关掉时照常显示，免得面板只剩“没有返回额度”
+    };
+    const prev = last.get(instanceId);
+    if (prev) last.set(instanceId, { ...prev, ctx, seen: now() }); // 重读用 T3 最近一次给的参数
     const hit = cache.get(key);
-    if (hit && now() - hit.at < CACHE_MS) {
-      if (hit.error) throw hit.error;
-      return { windows: hit.windows };
-    }
+    if (hit && now() - hit.at < CACHE_MS) return shown(hit);
     if (!inflight.has(key)) {
       for (const k of cache.keys()) if (k.startsWith(`${instanceId}\0`)) cache.delete(k); // 同一实例只留最新配置的结果
+      const save = (r) => {
+        cache.set(key, r);
+        last.set(instanceId, { ctx, seen: now(), ...r });
+      };
       const job = readFresh(ctx).then(
-        (windows) => cache.set(key, { at: now(), windows }),
+        (groups) => save({ at: now(), groups }),
         (error) => {
           log(`${instanceId} 读取额度失败：${error.message}`);
-          cache.set(key, { at: now(), error });
+          save({ at: now(), error });
         },
       );
       inflight.set(key, job.finally(() => inflight.delete(key)));
     }
     await inflight.get(key);
-    const done = cache.get(key);
-    if (done.error) throw done.error;
-    return { windows: done.windows };
+    return shown(cache.get(key));
   }
 
   return {
     read,
+    /** 各实例最近一次读取（不按 hidden 过滤，设置面板要列出全部窗口），以及是不是因为可能有消耗停了 CLI。 */
+    status() {
+      const instances = live().map(([instanceId, r]) => ({
+        instanceId,
+        at: new Date(r.at).toISOString(),
+        ...(r.error ? { error: r.error.message } : { windows: toWindows(r.groups, lang()).map(({ id, label, usedPercent }) => ({ id, label, usedPercent })) }),
+      }));
+      return { instances, blocked: spent.size > 0 };
+    },
+    /** 不等缓存过期，用各实例上次的参数马上再读一次。 */
+    async reread() {
+      cache.clear();
+      await Promise.allSettled(live().map(([, r]) => read(r.ctx)));
+    },
+    /** 恢复运行被停掉的 CLI：重新当成没确认过安全的，第一次读取前一次只跑一个。 */
+    unblock() {
+      epoch += 1;
+      for (const id of spent) safe.delete(id);
+      spent.clear();
+      cache.clear();
+    },
     dispose() {
       disposed = true;
       for (const child of children) {
@@ -246,8 +295,54 @@ export function createReader({ dataDir, log = () => {}, now = Date.now, timeoutM
   };
 }
 
-export function activate(t3x) {
-  const reader = createReader({ dataDir: t3x.dataDir, log: t3x.log });
+/** 设置里关掉的额度窗口 id；只能是宿主认的 id 格式，最多 32 个。 */
+export function cleanHidden(ids) {
+  if (!Array.isArray(ids)) throw new Error("hidden 需要是数组");
+  return [...new Set(ids.filter((id) => typeof id === "string" && ID_RE.test(id)))].slice(0, 32);
+}
+
+async function loadConfig(dataDir, log) {
+  try {
+    const saved = JSON.parse(await fs.readFile(path.join(dataDir, "config.json"), "utf8"));
+    return { hidden: cleanHidden(saved?.hidden ?? []) };
+  } catch (error) {
+    if (error.code !== "ENOENT") log(`设置读不出来，用默认值：${error.message}`);
+    return { hidden: [] };
+  }
+}
+
+async function saveConfig(dataDir, config) {
+  await fs.mkdir(dataDir, { recursive: true, mode: 0o700 });
+  const file = path.join(dataDir, "config.json");
+  const tmp = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+  await fs.writeFile(tmp, `${JSON.stringify(config)}\n`, { mode: 0o600 });
+  await fs.rename(tmp, file);
+}
+
+export async function activate(t3x) {
+  const config = await loadConfig(t3x.dataDir, t3x.log);
+  const reader = createReader({ dataDir: t3x.dataDir, log: t3x.log, lang: t3x.lang, hidden: () => config.hidden });
   t3x.usage.registerSource({ driver: "antigravity", read: reader.read });
+  const state = () => ({ ...reader.status(), hidden: config.hidden });
+  let saving = Promise.resolve(); // 一次只存一份，内存和磁盘按同样的顺序更新
+  t3x.handle("status", state);
+  t3x.handle("setHidden", async (ids) => {
+    const hidden = cleanHidden(ids);
+    const job = saving.then(async () => {
+      await saveConfig(t3x.dataDir, { ...config, hidden });
+      config.hidden = hidden;
+    });
+    saving = job.catch(() => {});
+    await job;
+    return state();
+  });
+  t3x.handle("reread", async () => {
+    await reader.reread();
+    return state();
+  });
+  t3x.handle("unblock", () => {
+    reader.unblock();
+    return state();
+  });
   return () => reader.dispose();
 }

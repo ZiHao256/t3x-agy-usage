@@ -8,13 +8,23 @@ Reads Antigravity limits for T3's usage panel with the official CLI's `/usage` c
 
 An extension for [T3 Code Extensions](https://github.com/ZiHao256/t3code-extensions), an unofficial extension host for [T3 Code](https://github.com/pingdotgg/t3code).
 
+## Settings
+
+Settings → Extensions → Antigravity usage via CLI → Settings:
+
+- Status: when each Antigravity instance was last read and how many limits it returned, or why it failed.
+- Read now: skips the one-minute cache and reads again with the CLI; the usage panel shows the result on its next refresh.
+- Resume: if a read may have spent tokens, the extension stops that CLI and a Resume button appears here; click it once you've checked the CLI.
+- Show in the usage panel: turn individual limits on or off (for example, weekly limits only); at least one stays on.
+- Limit names follow T3's UI language: in English they read "Gemini · Weekly" and "Claude & GPT (shared) · 5-hour".
+
 ## Install with an agent
 
 Paste this to Claude Code, Codex or another coding agent:
 
 ```text
 Install the T3 Code extension "Antigravity usage via CLI" (https://github.com/ZiHao256/t3x-agy-usage) on this Mac.
-1. Check that T3 Code Extensions is installed (v0.2.0 or later: `node install.cjs status` in its checkout must say it is installed for T3 Code 0.1.12). If it isn't, install it first by following the "Install with an agent" section of https://github.com/ZiHao256/t3code-extensions/blob/main/README.en.md, and ask me before quitting T3 Code.
+1. Check that T3 Code Extensions 0.4 or later is installed (`git describe --tags` in its checkout shows v0.4.0 or later). If it is missing or older, install or update it first by following the "Install with an agent" section of https://github.com/ZiHao256/t3code-extensions/blob/main/README.en.md, and ask me before quitting T3 Code.
 2. Open ~/Applications/T3 Code Extensions.app, go to Settings → Extensions → Browse, and install "t3x-agy-usage" from the community list, or paste https://github.com/ZiHao256/t3x-agy-usage into the link field and click Add. In the confirmation dialog, check that the source is ZiHao256/t3x-agy-usage before confirming. It runs in T3's background, so the dialog notes background permission; that is expected.
 3. In the Installed tab, make sure it is enabled and tell me its version.
 If you can't operate the app's UI, do step 1, then tell me exactly what to click for steps 2 and 3.
@@ -22,7 +32,7 @@ If you can't operate the app's UI, do step 1, then tell me exactly what to click
 
 ## How it works
 
-- A background extension (`apiVersion` 4, `permissions: ["server"]`): it runs inside T3's backend with your user permissions.
+- A background extension (`apiVersion` 6, `permissions: ["ui", "server"]`): reading runs inside T3's backend with your user permissions, and the settings panel (`web.js`) asks the background script for status and changes settings through `host.server.call`. Settings live in the extension's data folder and are deleted on uninstall.
 - For each instance it runs the CLI that T3 resolved for that instance: `<cli> -p /usage --output-format json --print-timeout 20s`. `HOME` points to a per-instance shadow folder whose `.gemini/antigravity-cli` links to T3's sign-in folder for that instance, so every instance reads its own account. Variables that switch the sign-in method (`GEMINI_API_KEY`, `GOOGLE_*`, …) are removed; auto-update and the browser are disabled.
 - The instance's MCP config is not linked: otherwise the CLI starts every configured MCP server on each read.
 - Safeguards against `/usage` being sent to the model: CLI older than 1.1.11 is refused (the version is rechecked whenever the CLI file changes); a result counts only if it is the `usage` command with 0 turns and every token count 0; until a CLI has passed once, only one read runs at a time; if a read may have spent tokens, that CLI is not run again until the extension is re-enabled or the CLI changes. These limit the damage to at most one message, they can't make it impossible.

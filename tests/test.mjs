@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { activate, cliEnv, createReader, parseUsage } from "../server.mjs";
+import { activate, cleanHidden, cliEnv, createReader, parseUsage } from "../server.mjs";
 
 const fixture = JSON.parse(fs.readFileSync(new URL("./usage.json", import.meta.url), "utf8"));
 const tests = [];
@@ -17,6 +17,10 @@ test("解析 /usage：换算已用比例、1970 年占位不当重置时间", ()
     { id: "3p-weekly", label: "Claude & GPT (shared) · Weekly", kind: "weekly", usedPercent: 0, windowDurationMins: 10080 },
     { id: "3p-5h", label: "Claude & GPT (shared) · 5-hour", kind: "session", usedPercent: 0, windowDurationMins: 300 },
   ]);
+});
+
+test("解析 /usage：中文标签", () => {
+  assert.deepEqual(parseUsage(JSON.stringify(fixture), "zh").map((w) => w.label), ["Gemini · 每周", "Gemini · 5 小时", "Claude 与 GPT（共用） · 每周", "Claude 与 GPT（共用） · 5 小时"]);
 });
 
 test("解析 /usage：有消耗、失败、不是 JSON 都报错", () => {
@@ -166,12 +170,144 @@ test("读取：CLI 不理 SIGTERM 也按时结束，之后同一实例还能重�
   }
 });
 
-test("activate：登记 antigravity 来源，停用时返回清理函数", () => {
-  const seen = [];
-  const off = activate({ dataDir: "/tmp/none", log() {}, usage: { registerSource: (s) => seen.push(s) } });
-  assert.equal(seen[0].driver, "antigravity");
-  assert.equal(typeof seen[0].read, "function");
-  assert.equal(typeof off, "function");
+test("状态、立即重读、隐藏窗口、恢复被停掉的 CLI", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "t3x-agy-"));
+  try {
+    const cli = fakeCli(root);
+    let lang = "en";
+    let hidden = [];
+    const reader = createReader({ dataDir: path.join(root, "data"), lang: () => lang, hidden: () => hidden });
+    assert.deepEqual(reader.status(), { instances: [], blocked: false });
+    const a = { instanceId: "antigravity", profileDirectory: profile(root, "a"), executablePath: cli.bin, environment: { PATH: process.env.PATH, SECRET: "s" } };
+    await reader.read(a);
+    hidden = ["gemini-5h", "3p-5h"];
+    lang = "zh";
+    assert.deepEqual((await reader.read(a)).windows.map((w) => w.label), ["Gemini · 每周", "Claude 与 GPT（共用） · 每周"], "缓存里的结果也按当前语言和设置给");
+    const st = reader.status();
+    assert.equal(st.instances[0].windows.length, 4, "状态不按隐藏过滤");
+    assert.equal(st.instances[0].windows[1].label, "Gemini · 5 小时");
+    assert(!JSON.stringify(st).includes("SECRET"), "状态里不带环境变量");
+    const runs = () => cli.calls().filter((l) => l.startsWith("-p ")).length;
+    assert.equal(runs(), 1);
+    await reader.reread();
+    assert.equal(runs(), 2, "立即重读不等缓存");
+
+    // 有消耗：停掉 CLI，恢复后重新按没确认过安全的处理
+    fs.writeFileSync(cli.out, JSON.stringify({ ...fixture, num_turns: 1, usage: { total_tokens: 9 } }));
+    await reader.reread();
+    assert.equal(reader.status().blocked, true);
+    assert.match(reader.status().instances[0].error, /当成了对话/);
+    await assert.rejects(reader.read(a), /当成了对话/, "一分钟内复用失败结果");
+    fs.writeFileSync(cli.out, JSON.stringify(fixture));
+    reader.unblock();
+    assert.equal(reader.status().blocked, false);
+    assert.equal((await reader.read(a)).windows.length, 2, "恢复后马上能读");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("边界：全隐藏时照常显示、格式不对的部分跳过、一小时没来读的实例不列也不重读", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "t3x-agy-"));
+  try {
+    const cli = fakeCli(root);
+    let t = 1_000_000;
+    const reader = createReader({ dataDir: path.join(root, "data"), now: () => t, hidden: () => ["gemini-weekly", "gemini-5h", "3p-weekly", "3p-5h"] });
+    const a = { instanceId: "antigravity", profileDirectory: profile(root, "a"), executablePath: cli.bin, environment: { PATH: process.env.PATH } };
+    assert.equal((await reader.read(a)).windows.length, 4, "全被关掉时照常显示");
+    const bad = structuredClone(fixture);
+    bad.command.data.groups[0].buckets = 5;
+    bad.command.data.groups.push({ name: 7, buckets: [{ id: "x", name: 8, remaining_fraction: 0.5 }] });
+    fs.writeFileSync(cli.out, JSON.stringify(bad));
+    const b = { ...a, instanceId: "antigravity_3", profileDirectory: profile(root, "b") };
+    assert.deepEqual((await reader.read(b)).windows.map((w) => w.label), ["x · Quota"], "名字不是字符串也不抛");
+    bad.command.data.groups = [null, { buckets: [null, { id: 3 }] }, 5];
+    fs.writeFileSync(cli.out, JSON.stringify(bad));
+    const c = { ...a, instanceId: "antigravity_4", profileDirectory: profile(root, "c") };
+    assert.deepEqual((await reader.read(c)).windows, [], "格式不对的部分跳过");
+    assert.deepEqual(reader.status().instances.map((i) => i.windows.length), [4, 3, 0], "其他实例的状态照常");
+    const runs = () => cli.calls().filter((l) => l.startsWith("-p ")).length;
+    const before = runs();
+    t += 61 * 60_000;
+    assert.deepEqual(reader.status().instances, [], "一小时没来读的不列");
+    await reader.reread();
+    assert.equal(runs(), before, "也不重读");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("恢复运行后，恢复前就在跑的读取成功了也不能把 CLI 标成安全", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "t3x-agy-"));
+  try {
+    // MODE=slow 慢一点成功、MODE=spent 报有消耗；每次运行记 start / end，看有没有重叠
+    const bin = path.join(root, "agy");
+    fs.writeFileSync(path.join(root, "ok.json"), JSON.stringify(fixture));
+    fs.writeFileSync(path.join(root, "spent.json"), JSON.stringify({ ...fixture, num_turns: 1, usage: { total_tokens: 3 } }));
+    fs.writeFileSync(bin, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo 1.5.14; exit 0; fi
+echo "start $MODE" >> "${root}/runs.log"
+[ "$MODE" = slow ] && sleep 0.6
+[ "$MODE" = pair ] && sleep 0.3
+echo "end $MODE" >> "${root}/runs.log"
+if [ "$MODE" = spent ]; then cat "${root}/spent.json"; else cat "${root}/ok.json"; fi
+`, { mode: 0o755 });
+    const reader = createReader({ dataDir: path.join(root, "data") });
+    const ctx = (name, MODE) => ({ instanceId: name, profileDirectory: profile(root, name), executablePath: bin, environment: { PATH: process.env.PATH, MODE } });
+    await reader.read(ctx("first", "ok")); // 先确认安全
+    const slow = reader.read(ctx("slow", "slow"));
+    await assert.rejects(reader.read(ctx("bad", "spent")), /当成了对话/);
+    reader.unblock();
+    await slow; // 恢复前就在跑的这次成功了
+    fs.writeFileSync(path.join(root, "runs.log"), "");
+    await Promise.all([reader.read(ctx("p1", "pair")), reader.read(ctx("p2", "pair"))]);
+    const log = fs.readFileSync(path.join(root, "runs.log"), "utf8").trim().split("\n");
+    assert.deepEqual(log, ["start pair", "end pair", "start pair", "end pair"], "恢复后第一次读取前一次只跑一个");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("设置：并发保存时内存和磁盘一致", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "t3x-agy-"));
+  try {
+    const handlers = {};
+    await activate({ dataDir: path.join(root, "data"), log() {}, lang: () => "en", usage: { registerSource() {} }, handle: (n, fn) => (handlers[n] = fn) });
+    await Promise.all([handlers.setHidden(["3p-5h"]), handlers.setHidden(["gemini-5h"]), handlers.setHidden(["3p-weekly"])]);
+    const disk = JSON.parse(fs.readFileSync(path.join(root, "data", "config.json"), "utf8")).hidden;
+    assert.deepEqual(disk, ["3p-weekly"]);
+    assert.deepEqual((await handlers.status()).hidden, disk);
+    assert.deepEqual(fs.readdirSync(path.join(root, "data")).filter((f) => f.endsWith(".tmp")), []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("activate：登记来源和设置面板的调用，隐藏的窗口存进数据目录", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "t3x-agy-"));
+  try {
+    const t3x = (seen, handlers) => ({ dataDir: path.join(root, "data"), log() {}, lang: () => "en", usage: { registerSource: (s) => seen.push(s) }, handle: (name, fn) => (handlers[name] = fn) });
+    const seen = [];
+    const handlers = {};
+    const off = await activate(t3x(seen, handlers));
+    assert.equal(seen[0].driver, "antigravity");
+    assert.equal(typeof off, "function");
+    assert.deepEqual(Object.keys(handlers).sort(), ["reread", "setHidden", "status", "unblock"]);
+    assert.deepEqual(await handlers.status(), { instances: [], blocked: false, hidden: [] });
+    assert.deepEqual((await handlers.setHidden(["3p-5h", "3p-5h", "../x", 1])).hidden, ["3p-5h"]);
+    await assert.rejects(async () => handlers.setHidden("3p-5h"), /数组/);
+    const again = {};
+    await activate(t3x([], again));
+    assert.deepEqual((await again.status()).hidden, ["3p-5h"], "重新启用后还在");
+    fs.writeFileSync(path.join(root, "data", "config.json"), "{");
+    const broken = {};
+    await activate(t3x([], broken));
+    assert.deepEqual((await broken.status()).hidden, [], "设置文件坏了用默认值");
+    assert.equal(cleanHidden(Array.from({ length: 40 }, (_, i) => `w${i}`)).length, 32);
+    off();
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 let passed = 0;
