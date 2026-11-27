@@ -2,7 +2,7 @@
 
 # Antigravity usage via CLI
 
-Reads Antigravity limits for T3's usage panel with the official CLI's `/usage` command. Each T3 Antigravity instance uses its own sign-in; the command sends no message and spends no tokens. T3 stops reading your token file and calling Google's internal API with a spoofed client header.
+Reads Antigravity limits for T3's usage panel with the official CLI's `/usage` command. Each T3 Antigravity instance uses its own sign-in; the command sends no message and spends no tokens, and nothing reads your token file or calls Google's internal API with a spoofed client header. From T3 Code 0.1.13 on, T3 no longer reads Antigravity limits itself, so without this extension the panel has none; on 0.1.12, installing it stops T3's own token-based reader.
 
 ![T3's usage panel showing the Antigravity limits of two instances read through the CLI](docs/usage-panel.png)
 
@@ -26,7 +26,7 @@ Paste this to Claude Code, Codex or another coding agent:
 
 ```text
 Install the T3 Code extension "Antigravity usage via CLI" (https://github.com/ZiHao256/t3x-agy-usage) on this Mac.
-1. Check that T3 Code Extensions 0.4 or later is installed (`git describe --tags` in its checkout shows v0.4.0 or later). If it is missing or older, install or update it first by following the "Install with an agent" section of https://github.com/ZiHao256/t3code-extensions/blob/main/README.en.md, and ask me before quitting T3 Code.
+1. Check that T3 Code Extensions is installed: v0.6.0 or later for T3 Code 0.1.13, v0.4.0 – v0.5.0 for 0.1.12 (`git describe --tags` in its checkout; if it was updated inside the app, go by Settings → Extensions). If it is missing or older, install or update it first by following the "Install with an agent" section of https://github.com/ZiHao256/t3code-extensions/blob/main/README.en.md, and ask me before quitting T3 Code.
 2. Open ~/Applications/T3 Code Extensions.app, go to Settings → Extensions → Browse, and install "t3x-agy-usage" from the community list, or paste https://github.com/ZiHao256/t3x-agy-usage into the link field and click Add. In the confirmation dialog, check that the source is ZiHao256/t3x-agy-usage before confirming. It runs in T3's background, so the dialog notes background permission; that is expected.
 3. In the Installed tab, make sure it is enabled and tell me its version.
 If you can't operate the app's UI, do step 1, then tell me exactly what to click for steps 2 and 3.

@@ -2,7 +2,7 @@
 
 # Antigravity 官方额度
 
-T3 额度面板里的 Antigravity 额度改由官方 CLI 的 `/usage` 读取：每个 T3 Antigravity 实例用自己的登录，不发消息、不耗 token。T3 不再自己读 token 文件、冒充客户端去调 Google 的内部接口。
+T3 额度面板里的 Antigravity 额度由官方 CLI 的 `/usage` 读取：每个 T3 Antigravity 实例用自己的登录，不发消息、不耗 token，也不读 token 文件、不冒充客户端去调 Google 的内部接口。T3 Code 0.1.13 起自己不再读 Antigravity 额度，不装这个扩展，额度面板里就没有这一项；在 0.1.12 上装了它，T3 就不再用自己那套拿 token 调接口的读取。
 
 ![T3 用量面板里显示两个实例经 CLI 读到的 Antigravity 额度](docs/usage-panel.png)
 
@@ -26,7 +26,7 @@ T3 额度面板里的 Antigravity 额度改由官方 CLI 的 `/usage` 读取：�
 
 ```text
 帮我在这台 Mac 上给 T3 Code 装「Antigravity 官方额度」扩展（https://github.com/ZiHao256/t3x-agy-usage）。
-1. 确认已安装 T3 Code Extensions 0.4 或更新版本（在它的仓库目录跑 `git describe --tags`，应为 v0.4.0 或更新）。没装或版本旧，先按 https://github.com/ZiHao256/t3code-extensions 里「让 agent 安装」一节装好；要退出 T3 Code 前先问我。
+1. 确认已安装 T3 Code Extensions：T3 Code 0.1.13 要 v0.6.0 或更新，0.1.12 要 v0.4.0 – v0.5.0（在它的仓库目录跑 `git describe --tags`；在应用里更新过的，以 设置 → 扩展 里的提示为准）。没装或版本旧，先按 https://github.com/ZiHao256/t3code-extensions 里「让 agent 安装」一节装好；要退出 T3 Code 前先问我。
 2. 打开 ~/Applications/T3 Code Extensions.app，进入 设置 → 扩展 →「浏览」，在社区扩展里安装 t3x-agy-usage；或者把 https://github.com/ZiHao256/t3x-agy-usage 粘贴到链接框里点「添加」。确认框里核对来源是 ZiHao256/t3x-agy-usage 再确认。这是后台扩展，确认框里会提示「后台」权限，属正常。
 3. 在「已安装」里确认它已启用，告诉我版本号。
 如果你没法操作应用界面，做完第 1 步后，把第 2、3 步具体点哪里告诉我。

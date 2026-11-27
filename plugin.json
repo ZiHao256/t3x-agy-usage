@@ -3,14 +3,14 @@
   "apiVersion": 6,
   "name": "Antigravity 官方额度",
   "version": "1.1.0",
-  "description": "T3 额度面板里的 Antigravity 额度改由官方 CLI 的 /usage 读取：每个实例用自己的登录，不发消息、不耗 token，T3 不再直接拿 token 调接口。设置里能看每个实例的读取结果、立即重读、选面板里显示哪些额度。",
+  "description": "T3 额度面板里的 Antigravity 额度由官方 CLI 的 /usage 读取：每个实例用自己的登录，不发消息、不耗 token，不拿 token 直接调接口（T3 0.1.13 起自己不再读，装了它面板里才有）。设置里能看每个实例的读取结果、立即重读、选面板里显示哪些额度。",
   "author": "t3-extensions",
   "repository": "https://github.com/ZiHao256/t3x-agy-usage",
   "repositoryId": 1471964205,
   "locales": {
     "en": {
       "name": "Antigravity usage via CLI",
-      "description": "Reads Antigravity limits for T3's usage panel with the official CLI's /usage: each instance uses its own sign-in, sends no message, spends no tokens, and T3 stops calling the API with your token. In Settings, see each instance's last read, read again, and pick which limits to show."
+      "description": "Reads Antigravity limits for T3's usage panel with the official CLI's /usage: own sign-in per instance, no message sent, no tokens spent, no API calls with your token. T3 0.1.13+ shows these limits only with it. Settings show each instance's last read, read again, and pick which limits to show."
     }
   },
   "permissions": [
